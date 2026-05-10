@@ -24,7 +24,7 @@ const METODOS = [
   { value: "Efectivo",           label: "Efectivo",     icon: Banknote },
   { value: "Transferencia",      label: "Transferencia", icon: Smartphone },
   { value: "Tarjeta",            label: "Tarjeta",      icon: CreditCard },
-  { value: "Cuenta Corriente",   label: "Cta. Corriente", icon: BadgePercent },
+  { value: "Cuenta Corriente",   label: "Cta. Corriente", icon: BadgePercent, esDeuda: true },
 ];
 
 export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }) {
@@ -243,7 +243,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
     });
     setSubmitting(false);
     if (result.success) {
-      setToast({ text: `Venta #${result.ventaId} registrada correctamente`, ok: true });
+      setToast({ text: result.mensaje || `Venta #${result.ventaId} registrada correctamente`, ok: true });
       setModalOpen(false);
       clearCart();
       setSelectedCliente(null);
@@ -637,18 +637,25 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                   Método de Pago
                 </label>
                 <div className="grid grid-cols-2 gap-2">
-                  {METODOS.map(({ value, label, icon: Icon }) => (
+                  {METODOS.map(({ value, label, icon: Icon, esDeuda }) => (
                     <button
                       key={value}
                       onClick={() => setMetodoPago(value)}
                       className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all ${
                         metodoPago === value
-                          ? "bg-orange-500 border-orange-500 text-zinc-950"
+                          ? esDeuda 
+                            ? "bg-red-500/20 border-red-500 text-red-400"
+                            : "bg-orange-500 border-orange-500 text-zinc-950"
                           : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-600"
                       }`}
                     >
                       <Icon className="w-4 h-4" />
-                      {label}
+                      <div className="text-left">
+                        {label}
+                        {esDeuda && metodoPago === value && selectedCliente && (
+                          <p className="text-xs opacity-75">Límite: {formatARS(selectedCliente.limite_credito || 10000)}</p>
+                        )}
+                      </div>
                     </button>
                   ))}
                 </div>

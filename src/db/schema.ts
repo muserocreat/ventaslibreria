@@ -26,6 +26,8 @@ export const clientes = sqliteTable('clientes', {
   observaciones: text('observaciones'),
   nivel: text('nivel').default('Bronce'),
   descuento_activo: integer('descuento_activo').default(0),
+  limite_credito: real('limite_credito').default(10000),
+  bloqueado_cc: integer('bloqueado_cc').default(0),
 });
 
 export const cuentas_corrientes = sqliteTable('cuentas_corrientes', {

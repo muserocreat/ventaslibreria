@@ -12,6 +12,7 @@ import {
 import { like, or, eq, isNull, and, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { obtenerPrecioPromocional } from "@/lib/combosActions";
+import { formatCurrency } from "@/lib/formatter";
 
 export type ProductoResult = {
   id: number;
@@ -29,6 +30,8 @@ export type ClienteResult = {
   nombre: string;
   telefono: string;
   barrio: string;
+  limite_credito?: number;
+  saldo_cc?: number;
 };
 
 export type CartItem = {
@@ -46,6 +49,13 @@ export type CreateVentaData = {
   metodo_pago: string;
   descuento: number;
   items: CartItem[];
+};
+
+export type CreateVentaResult = {
+  success: boolean;
+  ventaId?: number;
+  mensaje?: string;
+  error?: string;
 };
 
 function nowSqliteLocal() {
@@ -183,8 +193,11 @@ export async function searchClientesAction(query: string): Promise<ClienteResult
       nombre: clientes.nombre,
       telefono: clientes.telefono,
       barrio: clientes.barrio,
+      limite_credito: clientes.limite_credito,
+      saldo_cc: cuentas_corrientes.saldo_actual,
     })
     .from(clientes)
+    .leftJoin(cuentas_corrientes, eq(clientes.id, cuentas_corrientes.cliente_id))
     .where(
       or(
         like(clientes.nombre, `%${q}%`),
@@ -195,9 +208,7 @@ export async function searchClientesAction(query: string): Promise<ClienteResult
     .limit(8) as Promise<ClienteResult[]>;
 }
 
-export async function createVentaAction(
-  data: CreateVentaData
-): Promise<{ success: boolean; ventaId?: number; error?: string }> {
+export async function createVentaAction(data: CreateVentaData): Promise<CreateVentaResult> {
   try {
     if (!data.items.length) return { success: false, error: "El carrito está vacío" };
 
@@ -229,6 +240,30 @@ export async function createVentaAction(
 
     if (data.metodo_pago === "Cuenta Corriente" && esAnonimo) {
       return { success: false, error: "Para Cuenta Corriente debe seleccionar un cliente válido" };
+    }
+
+    // Validar límite de crédito para cuenta corriente
+    if (data.metodo_pago === "Cuenta Corriente") {
+      const [clienteCC] = await db
+        .select({
+          limite_credito: clientes.limite_credito,
+          saldo_actual: cuentas_corrientes.saldo_actual,
+        })
+        .from(clientes)
+        .leftJoin(cuentas_corrientes, eq(clientes.id, cuentas_corrientes.cliente_id))
+        .where(eq(clientes.id, data.cliente_id))
+        .limit(1);
+
+      const limiteCredito = clienteCC?.limite_credito || 10000;
+      const saldoActual = clienteCC?.saldo_actual || 0;
+      const nuevoSaldo = saldoActual + total;
+
+      if (nuevoSaldo > limiteCredito) {
+        return { 
+          success: false, 
+          error: `Límite de crédito excedido. Límite: ${formatCurrency(limiteCredito)}, Saldo actual: ${formatCurrency(saldoActual)}, Intenta agregar: ${formatCurrency(total)}` 
+        };
+      }
     }
 
     const ventaId = db.transaction((tx) => {
@@ -373,7 +408,11 @@ export async function createVentaAction(
     revalidatePath("/productos");
     revalidatePath("/clientes");
 
-    return { success: true, ventaId };
+    const mensaje = data.metodo_pago === "Cuenta Corriente" 
+      ? `Venta #${ventaId} registrada en cuenta corriente por ${formatCurrency(total)}`
+      : `Venta #${ventaId} registrada correctamente`;
+
+    return { success: true, ventaId, mensaje };
   } catch (error) {
     console.error("Error en createVentaAction:", error);
     return {
