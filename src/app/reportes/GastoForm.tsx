@@ -116,8 +116,18 @@ export function GastoForm() {
           </div>
         </div>
 
-        {medioPago === "Tarjeta" && (
-          <label className="flex items-center gap-2 cursor-pointer p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+        {medioPago === "Tarjeta" ? (
+          <div className="p-3 bg-purple-500/10 rounded-xl border border-purple-500/30 flex items-start gap-2">
+            <CreditCard className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
+            <div>
+              <span className="text-xs font-bold text-purple-300">Deuda Automática</span>
+              <p className="text-[10px] text-purple-400/80 leading-tight">
+                Al usar tarjeta, el sistema creará una deuda para seguimiento del vencimiento automáticamente.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <label className="flex items-center gap-2 cursor-pointer p-3 bg-zinc-950 rounded-xl border border-zinc-800 hover:border-zinc-700 transition-colors">
             <input
               type="checkbox"
               checked={esCompraCredito}
@@ -125,8 +135,8 @@ export function GastoForm() {
               className="rounded border-zinc-700 bg-zinc-950 text-purple-500 focus:ring-purple-500/50"
             />
             <div className="flex-1">
-              <span className="text-xs font-medium text-zinc-300">Compra a crédito</span>
-              <p className="text-[10px] text-zinc-500">Genera deuda automáticamente (ej: mercadería, equipamiento)</p>
+              <span className="text-xs font-medium text-zinc-300">Marcar como compra a crédito</span>
+              <p className="text-[10px] text-zinc-500">Generar deuda en el sistema para pago diferido.</p>
             </div>
           </label>
         )}

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createDeudaAction, addPagoDeudaAction, deleteDeudaAction, deletePagoDeudaAction, type DeudaItem } from "@/lib/reportesActions";
-import { Plus, Minus, DollarSign, CreditCard, Trash2, ChevronDown, ChevronUp, CheckCircle } from "lucide-react";
+import { Plus, Minus, DollarSign, CreditCard, Trash2, ChevronDown, ChevronUp, CheckCircle, Clock } from "lucide-react";
 import { formatCurrency } from "@/lib/formatter";
 
 export function DeudaForm({ deudas }: { deudas: DeudaItem[] }) {
@@ -10,6 +10,7 @@ export function DeudaForm({ deudas }: { deudas: DeudaItem[] }) {
   const [nombre, setNombre] = useState("");
   const [monto, setMonto] = useState("");
   const [descripcion, setDescripcion] = useState("");
+  const [fechaVencimiento, setFechaVencimiento] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -24,12 +25,14 @@ export function DeudaForm({ deudas }: { deudas: DeudaItem[] }) {
       nombre,
       descripcion: descripcion || undefined,
       monto_total: parseFloat(monto),
+      fecha_vencimiento: fechaVencimiento || undefined,
     });
     setSubmitting(false);
     if (result.success) {
       setNombre("");
       setMonto("");
       setDescripcion("");
+      setFechaVencimiento("");
       setShowForm(false);
       window.location.reload();
     } else {
@@ -121,15 +124,24 @@ export function DeudaForm({ deudas }: { deudas: DeudaItem[] }) {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Descripción (opcional)</label>
+              <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Vencimiento (opcional)</label>
               <input
-                type="text"
-                value={descripcion}
-                onChange={(e) => setDescripcion(e.target.value)}
-                placeholder="Nota..."
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/50 text-sm"
+                type="date"
+                value={fechaVencimiento}
+                onChange={(e) => setFechaVencimiento(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 focus:outline-none focus:border-purple-500/50 text-sm"
               />
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-zinc-500 uppercase mb-1">Descripción (opcional)</label>
+            <input
+              type="text"
+              value={descripcion}
+              onChange={(e) => setDescripcion(e.target.value)}
+              placeholder="Nota adicional..."
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/50 text-sm"
+            />
           </div>
           <button
             type="submit"
@@ -162,6 +174,12 @@ export function DeudaForm({ deudas }: { deudas: DeudaItem[] }) {
                     <span className={d.saldo > 0 ? "text-orange-400" : "text-emerald-400"}>
                       Saldo: {formatCurrency(Math.max(0, d.saldo))}
                     </span>
+                    {d.fecha_vencimiento && (
+                      <span className="flex items-center gap-1 text-purple-400 font-medium">
+                        <Clock className="w-3 h-3" />
+                        Vence: {d.fecha_vencimiento}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

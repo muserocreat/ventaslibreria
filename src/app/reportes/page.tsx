@@ -16,11 +16,12 @@ import {
   type AlertaPredictiva,
 } from "@/lib/reportesActions";
 import { formatCurrency } from "@/lib/formatter";
+import { getConfiguracionNumeroAction, registrarPagoObligacionAction } from "@/lib/configActions";
 import {
   TrendingUp, TrendingDown, DollarSign, Target, BarChart3,
   PieChart, ArrowUpRight, ArrowDownRight, Wallet, CreditCard,
   AlertTriangle, CheckCircle, Clock, Users, Layers,
-  RefreshCw, Shield, Activity, Bell,
+  RefreshCw, Shield, Activity, Bell, Settings,
 } from "lucide-react";
 import { VentasGastosLineChart } from "@/components/charts/VentasGastosLineChart";
 import { GastosPieChart } from "@/components/charts/GastosPieChart";
@@ -28,6 +29,7 @@ import { FlujosCajaChart } from "@/components/charts/FlujosCajaChart";
 import { MetodosPagoChart } from "@/components/charts/MetodosPagoChart";
 import { GastoForm } from "./GastoForm";
 import { DeudaForm } from "./DeudaForm";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -254,9 +256,19 @@ export default async function ReportesPage({
           <div className="p-2 bg-purple-500/15 rounded-lg"><Layers className="w-5 h-5 text-purple-500" /></div>
           <div>
             <h2 className="text-lg font-bold">Distribución Diaria</h2>
-            <p className="text-xs text-zinc-500">Asignación de fondos del día — {distribucion.operaciones} operaciones · Ticket promedio: {formatCurrency(distribucion.ticketPromedio)}</p>
+            <p className="text-xs text-zinc-500">Asignación de fondos líquidos — {distribucion.operaciones} operaciones · Ticket prom: {formatCurrency(distribucion.ticketPromedio)}</p>
           </div>
         </div>
+
+        {distribucion.recaudacionCC > 0 && (
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Users className="w-4 h-4 text-blue-400" />
+              <p className="text-xs text-blue-300">Ventas en Cuenta Corriente: <span className="font-bold">{formatCurrency(distribucion.recaudacionCC)}</span></p>
+            </div>
+            <p className="text-[10px] text-blue-400/70 italic">No incluido en distribución líquida hoy</p>
+          </div>
+        )}
 
         {noAlcanza && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-4 flex items-center gap-3">
@@ -268,16 +280,16 @@ export default async function ReportesPage({
         {/* KPIs del día */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
           <div className="bg-zinc-950 rounded-xl p-4 text-center">
-            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Recaudación</p>
-            <p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(distribucion.recaudacion)}</p>
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Ingresos Líquidos</p>
+            <p className="text-xl font-bold text-emerald-400 mt-1">{formatCurrency(distribucion.recaudacionLiquida)}</p>
           </div>
           <div className="bg-zinc-950 rounded-xl p-4 text-center">
-            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Costos Fijos</p>
-            <p className="text-xl font-bold text-red-400 mt-1">{formatCurrency(distribucion.totalFijosDiario)}</p>
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Reposición (CMV)</p>
+            <p className="text-xl font-bold text-red-400 mt-1">{formatCurrency(distribucion.cmv)}</p>
           </div>
           <div className="bg-zinc-950 rounded-xl p-4 text-center">
-            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Operativos + Reinv.</p>
-            <p className="text-xl font-bold text-orange-400 mt-1">{formatCurrency(distribucion.gastosOperativosDia + distribucion.gastosReinversionDia)}</p>
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Fijos + Pasivos</p>
+            <p className="text-xl font-bold text-orange-400 mt-1">{formatCurrency(distribucion.totalFijosDiario + distribucion.provisionDeudas)}</p>
           </div>
           <div className="bg-zinc-950 rounded-xl p-4 text-center">
             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider flex items-center justify-center gap-1"><RefreshCw className="w-3 h-3" /> Reinversión 70%</p>
@@ -296,10 +308,10 @@ export default async function ReportesPage({
           const falta = Math.max(0, distribucion.minimoRequerido - distribucion.recaudacion);
           return (
             <div className={`rounded-xl p-4 mb-4 border ${alcanzado ? "bg-emerald-500/5 border-emerald-500/20" : "bg-amber-500/5 border-amber-500/20"}`}>
-              <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <Target className={`w-4 h-4 ${alcanzado ? "text-emerald-400" : "text-amber-400"}`} />
-                  <span className="text-sm font-semibold">Mínimo requerido hoy</span>
+                  <span className="text-sm font-semibold">Punto de Equilibrio Hoy (Líquido)</span>
                 </div>
                 <span className={`text-lg font-bold ${alcanzado ? "text-emerald-400" : "text-amber-400"}`}>{formatCurrency(distribucion.minimoRequerido)}</span>
               </div>
@@ -314,7 +326,7 @@ export default async function ReportesPage({
                   {distribucion.minimoDetalle.map((d: { concepto: string; monto: number }) => `${d.concepto}: ${formatCurrency(d.monto)}`).join(" + ")}
                 </span>
                 <span className={`font-semibold ${alcanzado ? "text-emerald-400" : "text-amber-400"}`}>
-                  {alcanzado ? `✓ Superado por ${formatCurrency(distribucion.recaudacion - distribucion.minimoRequerido)}` : `Faltan ${formatCurrency(falta)}`}
+                  {alcanzado ? `✓ Superado por ${formatCurrency(distribucion.recaudacionLiquida - distribucion.minimoRequerido)}` : `Faltan ${formatCurrency(falta)} líquidos`}
                 </span>
               </div>
             </div>
@@ -366,11 +378,27 @@ export default async function ReportesPage({
             <tbody>
               <tr className="border-b border-zinc-800/60">
                 <td className="py-2 px-2">
+                  <p className="text-zinc-300">📦 Reposición Stock (CMV)</p>
+                  <p className="text-[10px] text-zinc-600 mt-0.5">Costo de mercadería vendida hoy</p>
+                </td>
+                <td className="py-2 px-2 text-right text-red-400 font-medium">{formatCurrency(distribucion.cmv)}</td>
+                <td className="py-2 px-2 text-right text-zinc-500">{distribucion.recaudacionLiquida > 0 ? ((distribucion.cmv / distribucion.recaudacionLiquida) * 100).toFixed(1) : 0}%</td>
+              </tr>
+              <tr className="border-b border-zinc-800/60">
+                <td className="py-2 px-2">
                   <p className="text-zinc-300">🏠 Costos Fijos</p>
                   <p className="text-[10px] text-zinc-600 mt-0.5">{distribucion.costosFijos.map(f => `${f.nombre} ${formatCurrency(f.cuotaDiaria)}`).join(" · ")}</p>
                 </td>
-                <td className="py-2 px-2 text-right text-red-400 font-medium">{formatCurrency(distribucion.totalFijosDiario)}</td>
-                <td className="py-2 px-2 text-right text-zinc-500">{distribucion.recaudacion > 0 ? ((distribucion.totalFijosDiario / distribucion.recaudacion) * 100).toFixed(1) : 0}%</td>
+                <td className="py-2 px-2 text-right text-orange-400 font-medium">{formatCurrency(distribucion.totalFijosDiario)}</td>
+                <td className="py-2 px-2 text-right text-zinc-500">{distribucion.recaudacionLiquida > 0 ? ((distribucion.totalFijosDiario / distribucion.recaudacionLiquida) * 100).toFixed(1) : 0}%</td>
+              </tr>
+              <tr className="border-b border-zinc-800/60">
+                <td className="py-2 px-2">
+                  <p className="text-zinc-300">💳 Provisión de Pasivos</p>
+                  <p className="text-[10px] text-zinc-600 mt-0.5">Cuota diaria para saldar deudas del ciclo</p>
+                </td>
+                <td className="py-2 px-2 text-right text-purple-400 font-medium">{formatCurrency(distribucion.provisionDeudas)}</td>
+                <td className="py-2 px-2 text-right text-zinc-500">{distribucion.recaudacionLiquida > 0 ? ((distribucion.provisionDeudas / distribucion.recaudacionLiquida) * 100).toFixed(1) : 0}%</td>
               </tr>
               {distribucion.gastosOperativosDia > 0 && (
                 <tr className="border-b border-zinc-800/60">
@@ -524,9 +552,18 @@ export default async function ReportesPage({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Obligaciones */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-orange-500/15 rounded-lg"><AlertTriangle className="w-5 h-5 text-orange-500" /></div>
-            <h2 className="text-lg font-bold">Obligaciones del Ciclo</h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-orange-500/15 rounded-lg"><AlertTriangle className="w-5 h-5 text-orange-500" /></div>
+              <h2 className="text-lg font-bold">Obligaciones del Ciclo</h2>
+            </div>
+            <Link
+              href="/configuraciones"
+              className="p-2 hover:bg-zinc-800 rounded-lg transition-colors text-zinc-400 hover:text-zinc-300"
+              title="Configurar obligaciones"
+            >
+              <Settings className="w-5 h-5" />
+            </Link>
           </div>
           {obligaciones.length === 0 ? (
             <p className="text-sm text-zinc-500 py-4 text-center">No hay obligaciones activas</p>
@@ -547,12 +584,29 @@ export default async function ReportesPage({
                       <p className="text-xs text-zinc-500">Vence día {o.vencimiento_dia}</p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className={`text-sm font-bold ${o.estado === "pagada" ? "text-emerald-400" : "text-zinc-200"}`}>
-                      {formatCurrency(o.monto_estimado)}
-                    </p>
-                    {o.monto_pagado > 0 && o.estado !== "pagada" && (
-                      <p className="text-xs text-zinc-500">Pagado: {formatCurrency(o.monto_pagado)}</p>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className={`text-sm font-bold ${o.estado === "pagada" ? "text-emerald-400" : "text-zinc-200"}`}>
+                        {formatCurrency(o.monto_estimado)}
+                      </p>
+                      {o.monto_pagado > 0 && o.estado !== "pagada" && (
+                        <p className="text-xs text-zinc-500">Pagado: {formatCurrency(o.monto_pagado)}</p>
+                      )}
+                    </div>
+                    {o.estado !== "pagada" && (
+                      <form action={async () => {
+                        "use server";
+                        const montoRestante = o.monto_estimado - o.monto_pagado;
+                        await registrarPagoObligacionAction(o.id, montoRestante);
+                      }}>
+                        <button
+                          type="submit"
+                          className="p-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg transition-colors"
+                          title="Marcar como pagada"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                        </button>
+                      </form>
                     )}
                   </div>
                 </div>

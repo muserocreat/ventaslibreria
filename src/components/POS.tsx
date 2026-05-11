@@ -16,6 +16,7 @@ import {
   type ClienteResult,
   type CartItem,
 } from "@/lib/ventaActions";
+import Link from "next/link";
 
 const formatARS = (v: number) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v);
@@ -28,6 +29,8 @@ const METODOS = [
 ];
 
 export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }) {
+  const [mounted, setMounted] = useState(false);
+  
   // ── Product search ─────────────────────────────────────────────
   const [query, setQuery]           = useState("");
   const [results, setResults]       = useState<ProductoResult[]>([]);
@@ -54,11 +57,17 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
   const [selectedCliente, setSelectedCliente] = useState<ClienteResult | null>(null);
   const [clienteAnonimo, setClienteAnonimo] = useState(false);
   const [metodoPago, setMetodoPago] = useState("Efectivo");
+  const [entrega, setEntrega]       = useState<number>(0);
   const [descuento, setDescuento]   = useState<number>(0);
   const [descTipo, setDescTipo]     = useState<"monto" | "pct">("monto");
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast]           = useState<{ text: string; ok: boolean } | null>(null);
   const clienteTimer                = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Component mount ─────────────────────────────────────────────
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // ── Product search debounce ────────────────────────────────────
   useEffect(() => {
@@ -161,7 +170,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
     setCart(prev =>
       prev.map(i =>
         i.producto_id === id
-          ? { ...i, precio: newPrice, subtotal: i.cantidad * newPrice }
+          ? { ...i, precio: newPrice, subtotal: i.cantidad * newPrice, precioManual: true }
           : i
       )
     );
@@ -171,6 +180,9 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
     const clienteId = selectedCliente?.id || (clienteAnonimo ? null : null);
     const newCart = await Promise.all(
       cart.map(async (item) => {
+        // Si el precio fue editado manualmente, no lo recalculamos automáticamente
+        if (item.precioManual) return item;
+
         const result = await getPrecioPromocionalForClientAction(item.producto_id, item.cantidad, clienteId || null);
         const precio = result.precio || item.precio_venta_minorista || item.precio;
         return {
@@ -240,6 +252,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
       metodo_pago: metodoPago,
       descuento: descuentoMonto,
       items: cart,
+      entrega: metodoPago === "Cuenta Corriente" ? entrega : 0,
     });
     setSubmitting(false);
     if (result.success) {
@@ -250,6 +263,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
       setClienteAnonimo(false);
       setClienteQuery("");
       setDescuento(0);
+      setEntrega(0);
       setMetodoPago("Efectivo");
     } else {
       setToast({ text: result.error ?? "Error al registrar la venta", ok: false });
@@ -274,7 +288,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
             <p className="text-zinc-500 text-sm">Buscá productos y armá el pedido del cliente</p>
           </div>
         </div>
-        {cart.length > 0 && (
+        {mounted && cart.length > 0 && (
           <button onClick={clearCart} className="text-xs text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1">
             <Trash2 className="w-3.5 h-3.5" /> Vaciar carrito
           </button>
@@ -360,9 +374,9 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                       <div className="flex items-center gap-2 ml-4 shrink-0">
                         {p.stock != null && (
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            p.stock > 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
+                            p.stock > 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"
                           }`}>
-                            Stock: {p.stock}
+                            {p.stock > 0 ? `Stock: ${p.stock}` : `Stock: ${p.stock}`}
                           </span>
                         )}
                         <div className="text-right">
@@ -486,19 +500,36 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                         </div>
                         {/* Editable price + subtotal */}
                         <div className="text-right">
-                          <div className="flex items-center justify-end gap-1 mb-0.5">
-                            <span className="text-[10px] text-zinc-600">$</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={item.precio || ""}
-                              onChange={(e) =>
-                                updatePrice(item.producto_id, parseFloat(e.target.value) || 0)
-                              }
-                              className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-0.5 text-zinc-300 text-xs text-right focus:outline-none focus:border-orange-500/50 focus:text-zinc-100 transition-colors"
-                              title="Precio unitario (editable)"
-                            />
+                          <div className="flex flex-col items-end gap-1 mb-0.5">
+                            <div className="flex items-center gap-1">
+                              {item.precioManual && (
+                                <button
+                                  onClick={() => {
+                                    setCart(prev => prev.map(i => i.producto_id === item.producto_id ? { ...i, precioManual: false } : i));
+                                  }}
+                                  className="text-[9px] bg-amber-500/20 text-amber-500 px-1 py-0.5 rounded font-bold hover:bg-amber-500/30 transition-colors"
+                                  title="Precio manual - Click para resetear"
+                                >
+                                  Manual
+                                </button>
+                              )}
+                              <span className="text-[10px] text-zinc-600">$</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.precio || ""}
+                                onChange={(e) =>
+                                  updatePrice(item.producto_id, parseFloat(e.target.value) || 0)
+                                }
+                                className={`w-24 bg-zinc-800 border rounded-lg px-2 py-0.5 text-xs text-right focus:outline-none transition-colors ${
+                                  item.precioManual 
+                                    ? "border-amber-500/50 text-amber-200 focus:border-amber-500" 
+                                    : "border-zinc-700 text-zinc-300 focus:border-orange-500/50 focus:text-zinc-100"
+                                }`}
+                                title="Precio unitario (editable)"
+                              />
+                            </div>
                           </div>
                           <p className="text-sm font-bold text-emerald-400">{formatARS(item.subtotal)}</p>
                         </div>
@@ -659,6 +690,35 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                     </button>
                   ))}
                 </div>
+
+                {/* Campo Entrega para Cuenta Corriente */}
+                {metodoPago === "Cuenta Corriente" && (
+                  <div className="mt-3 p-4 bg-zinc-950 border border-zinc-800 rounded-xl animate-in fade-in slide-in-from-top-2">
+                    <label className="block text-sm font-bold text-zinc-300 mb-2">
+                      <Banknote className="w-4 h-4 inline mr-1.5 text-emerald-400" />
+                      Monto que entrega ahora (Adelanto)
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max={total}
+                          step="0.01"
+                          value={entrega || ""}
+                          onChange={(e) => setEntrega(Math.min(total, parseFloat(e.target.value) || 0))}
+                          placeholder="0.00"
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-2.5 pl-8 pr-4 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/50 transition-all text-sm font-bold"
+                        />
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Saldo a Deuda</p>
+                        <p className="text-sm font-black text-red-400">{formatARS(total - entrega)}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Descuento */}
@@ -744,12 +804,23 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
             }
             <div>
               <p className="text-sm text-zinc-200 font-medium leading-relaxed">{toast.text}</p>
-              <button
-                onClick={() => setToast(null)}
-                className="text-xs text-zinc-500 hover:text-zinc-100 mt-2 font-bold uppercase tracking-wider"
-              >
-                Cerrar
-              </button>
+              <div className="flex items-center gap-4 mt-3">
+                {toast.ok && toast.text.includes("#") && (
+                  <Link
+                    href={`/ventas/${toast.text.split("#")[1].split(" ")[0]}/ticket`}
+                    target="_blank"
+                    className="text-xs bg-emerald-500 text-zinc-950 px-2 py-1 rounded font-bold uppercase tracking-wider hover:bg-emerald-400 transition-colors flex items-center gap-1"
+                  >
+                    <Receipt className="w-3 h-3" /> Ver Ticket
+                  </Link>
+                )}
+                <button
+                  onClick={() => setToast(null)}
+                  className="text-xs text-zinc-500 hover:text-zinc-100 font-bold uppercase tracking-wider"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
         </div>

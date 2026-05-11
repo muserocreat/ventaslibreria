@@ -149,6 +149,7 @@ export const pedidos = sqliteTable('pedidos', {
   adelanto: real('adelanto'),
   saldo: real('saldo'),
   productos_json: text('productos_json'),
+  notificar_whatsapp: integer('notificar_whatsapp').default(1),
 });
 
 export const mp_transactions = sqliteTable('mp_transactions', {
@@ -201,6 +202,7 @@ export const deudas = sqliteTable('deudas', {
   descripcion: text('descripcion'),
   monto_total: real('monto_total').notNull().default(0),
   activa: integer('activa').default(1),
+  fecha_vencimiento: text('fecha_vencimiento'), // Nueva columna para control de vencimientos
   fecha_creacion: text('fecha_creacion').default(sql`datetime('now','localtime')`),
 });
 
@@ -210,4 +212,14 @@ export const pagos_deuda = sqliteTable('pagos_deuda', {
   monto: real('monto').notNull().default(0),
   fecha: text('fecha').default(sql`datetime('now','localtime')`),
   nota: text('nota'),
+});
+
+export const configuraciones = sqliteTable('configuraciones', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  clave: text('clave').notNull().unique(),
+  valor: text('valor').notNull(),
+  descripcion: text('descripcion'),
+  categoria: text('categoria').default('general'),
+  tipo: text('tipo').default('texto'), // texto, numero, booleano
+  actualizado_en: text('actualizado_en').default(sql`datetime('now','localtime')`),
 });

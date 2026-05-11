@@ -12,6 +12,9 @@ import {
   BarChart3,
   Tag,
   RefreshCw,
+  BadgePercent,
+  Truck,
+  Settings,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -24,10 +27,13 @@ const menuItems = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Productos", href: "/productos", icon: Package },
   { name: "Clientes", href: "/clientes", icon: Users },
+  { name: "Cuentas Corrientes", href: "/cuentas-corrientes", icon: BadgePercent },
   { name: "Ventas", href: "/ventas", icon: ShoppingCart },
+  { name: "Pedidos", href: "/pedidos", icon: Truck },
   { name: "Actualizar", href: "/actualizar-precios", icon: RefreshCw },
   { name: "Combos", href: "/combos", icon: Tag },
   { name: "Reportes", href: "/reportes", icon: BarChart3 },
+  { name: "Configuraciones", href: "/configuraciones", icon: Settings },
 ];
 
 export function Sidebar() {

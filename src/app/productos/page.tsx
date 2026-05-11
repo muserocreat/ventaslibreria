@@ -31,7 +31,9 @@ export default async function ProductosPage({ searchParams }: Props) {
       like(productos.tipo, `%${word}%`),
       like(productos.marca, `%${word}%`),
       like(productos.descripcion, `%${word}%`),
-      like(productos.codigo_barras, `%${word}%`)
+      like(productos.codigo_barras, `%${word}%`),
+      like(productos.familia, `%${word}%`),
+      like(productos.rubro, `%${word}%`)
     )
   );
 

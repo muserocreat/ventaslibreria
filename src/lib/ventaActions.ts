@@ -42,6 +42,7 @@ export type CartItem = {
   subtotal: number;
   esPromocional?: boolean;
   precio_venta_minorista?: number;
+  precioManual?: boolean;
 };
 
 export type CreateVentaData = {
@@ -49,6 +50,7 @@ export type CreateVentaData = {
   metodo_pago: string;
   descuento: number;
   items: CartItem[];
+  entrega?: number;
 };
 
 export type CreateVentaResult = {
@@ -97,7 +99,18 @@ export async function getProductosByIdsAction(ids: number[]): Promise<ProductoRe
 export async function searchProductosAction(query: string): Promise<ProductoResult[]> {
   if (!query || query.trim().length < 2) return [];
 
-  const q = query.trim();
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const conditions = words.map(word => 
+    or(
+      like(productos.tipo, `%${word}%`),
+      like(productos.marca, `%${word}%`),
+      like(productos.descripcion, `%${word}%`),
+      like(productos.codigo_barras, `%${word}%`),
+      like(productos.familia, `%${word}%`),
+      like(productos.rubro, `%${word}%`)
+    )
+  );
+
   return db
     .select({
       id: productos.id,
@@ -113,12 +126,7 @@ export async function searchProductosAction(query: string): Promise<ProductoResu
     .where(
       and(
         or(isNull(productos.activo), eq(productos.activo, 1)),
-        or(
-          like(productos.tipo, `%${q}%`),
-          like(productos.marca, `%${q}%`),
-          like(productos.descripcion, `%${q}%`),
-          like(productos.codigo_barras, `%${q}%`)
-        )
+        ...conditions
       )
     )
     .limit(20) as Promise<ProductoResult[]>;
@@ -285,10 +293,7 @@ export async function createVentaAction(data: CreateVentaData): Promise<CreateVe
           throw new Error(`Producto no disponible: ${item.nombre}`);
         }
 
-        if (producto.stock !== null && producto.stock < item.cantidad) {
-          throw new Error(`Stock insuficiente para ${item.nombre}. Disponible: ${producto.stock}`);
-        }
-
+        // Permitir ventas con stock 0 o negativo
         return { ...item, precio_costo: producto.precio_costo };
       });
 
@@ -327,6 +332,9 @@ export async function createVentaAction(data: CreateVentaData): Promise<CreateVe
       }
 
       if (data.metodo_pago === "Cuenta Corriente") {
+        const entrega = data.entrega || 0;
+        const montoDeuda = total - entrega;
+
         const cuenta = tx
           .select({ id: cuentas_corrientes.id })
           .from(cuentas_corrientes)
@@ -338,7 +346,7 @@ export async function createVentaAction(data: CreateVentaData): Promise<CreateVe
           tx
             .update(cuentas_corrientes)
             .set({
-              saldo_actual: sql`COALESCE(${cuentas_corrientes.saldo_actual}, 0) + ${total}`,
+              saldo_actual: sql`COALESCE(${cuentas_corrientes.saldo_actual}, 0) + ${montoDeuda}`,
               fecha_ultimo_movimiento: fecha,
             })
             .where(eq(cuentas_corrientes.id, cuenta.id))
@@ -346,11 +354,12 @@ export async function createVentaAction(data: CreateVentaData): Promise<CreateVe
         } else {
           tx.insert(cuentas_corrientes).values({
             cliente_id: data.cliente_id,
-            saldo_actual: total,
+            saldo_actual: montoDeuda,
             fecha_ultimo_movimiento: fecha,
           }).run();
         }
 
+        // Registrar movimiento de Venta (por el total)
         tx.insert(movimientos_cuenta_corriente).values({
           cliente_id: data.cliente_id,
           tipo_movimiento: "venta",
@@ -366,6 +375,17 @@ export async function createVentaAction(data: CreateVentaData): Promise<CreateVe
             }))
           ),
         }).run();
+
+        // Si hubo entrega, registrar el movimiento de Pago (adelanto)
+        if (entrega > 0) {
+          tx.insert(movimientos_cuenta_corriente).values({
+            cliente_id: data.cliente_id,
+            tipo_movimiento: "pago",
+            monto: entrega,
+            descripcion: `Adelanto Venta #${newVenta.id}`,
+            fecha,
+          }).run();
+        }
       }
 
       const puntosSumar = Math.floor(total / 100);

@@ -8,6 +8,7 @@ import {
   pedidos, deudas, pagos_deuda,
 } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
+import { getConfiguracionNumeroAction } from "@/lib/configActions";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -50,6 +51,10 @@ export type DistribucionDiaria = {
   minimoRequerido: number;
   minimoDetalle: { concepto: string; monto: number }[];
   liberacionFlujo: { nombre: string; saldo: number; ahorroDiario: number }[];
+  cmv: number;
+  recaudacionLiquida: number;
+  recaudacionCC: number;
+  provisionDeudas: number;
 };
 
 export type DeudaTarjeta = {
@@ -478,9 +483,28 @@ export async function getDistribucionDiariaAction(fecha?: string): Promise<Distr
     .from(ventas)
     .where(sql`date(${ventas.fecha}) = ${targetDate}`);
 
-  const recaudacion = ventasDia.total || 0;
+  const [ventasMetodos] = await db
+    .select({
+      total: sql<number>`COALESCE(SUM(${ventas.total}), 0)`,
+      liquido: sql<number>`COALESCE(SUM(CASE WHEN ${ventas.metodo_pago} != 'Cuenta Corriente' THEN ${ventas.total} ELSE 0 END), 0)`,
+      cc: sql<number>`COALESCE(SUM(CASE WHEN ${ventas.metodo_pago} = 'Cuenta Corriente' THEN ${ventas.total} ELSE 0 END), 0)`,
+    })
+    .from(ventas)
+    .where(sql`date(${ventas.fecha}) = ${targetDate}`);
+
+  const recaudacion = ventasMetodos.total || 0;
+  const recaudacionLiquida = ventasMetodos.liquido || 0;
+  const recaudacionCC = ventasMetodos.cc || 0;
   const operaciones = ventasDia.count || 0;
   const ticketPromedio = operaciones > 0 ? recaudacion / operaciones : 0;
+
+  // CMV del día (Costo de Mercadería Vendida)
+  const [cmvResult] = await db
+    .select({ total: sql<number>`COALESCE(SUM(${detalle_venta.precio_costo_historico} * ${detalle_venta.cantidad}), 0)` })
+    .from(detalle_venta)
+    .innerJoin(ventas, eq(detalle_venta.venta_id, ventas.id))
+    .where(sql`date(${ventas.fecha}) = ${targetDate}`);
+  const cmv = cmvResult.total || 0;
 
   // Costos fijos activos → cuota diaria
   const fijosActivos = await db.select().from(gastos_fijos)
@@ -492,38 +516,55 @@ export async function getDistribucionDiariaAction(fecha?: string): Promise<Distr
   }));
   const totalFijosDiario = costosFijos.reduce((a, f) => a + f.cuotaDiaria, 0);
 
-  // Gastos operativos del día (cat 1) — todos influyen en distribución
+  // Gastos operativos del día (cat 1)
   const [gastosOpDia] = await db
     .select({ total: sql<number>`COALESCE(SUM(${gastos.monto}), 0)` })
     .from(gastos)
     .where(sql`date(${gastos.fecha}) = ${targetDate} AND ${gastos.categoria} = 1`);
   const gastosOperativosDia = gastosOpDia.total || 0;
 
-  // Gastos reinversión del día (cat 2) — todos influyen en distribución
+  // Gastos reinversión del día (cat 2)
   const [gastosReinvDia] = await db
     .select({ total: sql<number>`COALESCE(SUM(${gastos.monto}), 0)` })
     .from(gastos)
     .where(sql`date(${gastos.fecha}) = ${targetDate} AND ${gastos.categoria} = 2`);
   const gastosReinversionDia = gastosReinvDia.total || 0;
 
-  // Saldo pendiente de deudas activas (solo influye lo que falta pagar)
+  // Provisión de deudas (Cuota diaria para cubrir saldos antes del fin de ciclo)
+  const ciclo = getCicloActual();
+  const fechaFinCiclo = new Date(ciclo.hasta);
+  const hoyDate = new Date(targetDate);
+  const diasRestantesCiclo = Math.max(1, Math.ceil((fechaFinCiclo.getTime() - hoyDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+
   const allDeudas = await db.select().from(deudas).where(eq(deudas.activa, 1));
   const allPagos = await db.select().from(pagos_deuda);
-  const saldoDeudasPendiente = allDeudas.reduce((total, deuda) => {
+  const provisionDeudas = allDeudas.reduce((total, deuda) => {
     const pagosDeuda = allPagos.filter(p => p.deuda_id === deuda.id);
     const pagado = pagosDeuda.reduce((sum, p) => sum + (p.monto || 0), 0);
     const saldo = Math.max(0, (deuda.monto_total || 0) - pagado);
-    return total + saldo;
+    
+    // Si la deuda tiene vencimiento propio, usamos ese. Si no, el fin de ciclo.
+    let diasParaVencer = diasRestantesCiclo;
+    if (deuda.fecha_vencimiento) {
+      const fv = new Date(deuda.fecha_vencimiento);
+      diasParaVencer = Math.max(1, Math.ceil((fv.getTime() - hoyDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+    }
+
+    return total + (saldo / diasParaVencer);
   }, 0);
 
-  // Excedente = Recaudación - Fijos diarios - Operativos - Reinversión - Saldo deudas pendientes
-  const totalGastosDia = totalFijosDiario + gastosOperativosDia + gastosReinversionDia + saldoDeudasPendiente;
-  const excedente = Math.max(0, recaudacion - totalGastosDia);
-  const reinversion70 = excedente * 0.70;
-  const fondoEmergencia30 = excedente * 0.30;
+  // Excedente Real = Recaudación Líquida - CMV - Fijos Diarios - Operativos Hoy - Reinversión Hoy - Provisión Deudas
+  // Nota: Descontamos el CMV porque ese dinero debe reservarse para reposición
+  const totalGastosDia = cmv + totalFijosDiario + gastosOperativosDia + gastosReinversionDia + provisionDeudas;
+  const excedente = Math.max(0, recaudacionLiquida - totalGastosDia);
+  
+  // Usar configuraciones dinámicas para porcentajes
+  const reinversionPct = await getConfiguracionNumeroAction("distribucion_reinversion_pct") || 70;
+  const fondoPct = await getConfiguracionNumeroAction("distribucion_fondo_pct") || 30;
+  const reinversion70 = excedente * (reinversionPct / 100);
+  const fondoEmergencia30 = excedente * (fondoPct / 100);
 
   // Mínimo requerido: fijos diarios + promedio diario gastos operativos del ciclo + saldo deudas pendientes
-  const ciclo = getCicloActual();
   const [gastosOpCiclo] = await db
     .select({ total: sql<number>`COALESCE(SUM(${gastos.monto}), 0)` })
     .from(gastos)
@@ -533,9 +574,10 @@ export async function getDistribucionDiariaAction(fecha?: string): Promise<Distr
   const promedioOpDiario = (gastosOpCiclo.total || 0) / diasTranscurridos;
 
   const minimoDetalle = [
-    { concepto: "Costos fijos diarios", monto: totalFijosDiario },
-    { concepto: `Gastos operativos prom. (${diasTranscurridos}d)`, monto: promedioOpDiario },
-    { concepto: "Saldo deudas pendientes", monto: saldoDeudasPendiente },
+    { concepto: "Costo Reposición (CMV)", monto: cmv },
+    { concepto: "Costos Fijos Diarios", monto: totalFijosDiario },
+    { concepto: `Gastos Operativos Prom. (${diasTranscurridos}d)`, monto: promedioOpDiario },
+    { concepto: `Provisión Pasivos (${diasRestantesCiclo}d)`, monto: provisionDeudas },
   ];
   const minimoRequerido = minimoDetalle.reduce((a, d) => a + d.monto, 0);
 
@@ -552,6 +594,10 @@ export async function getDistribucionDiariaAction(fecha?: string): Promise<Distr
   }).filter(d => d.saldo > 0);
 
   return {
+    cmv,
+    recaudacionLiquida,
+    recaudacionCC,
+    provisionDeudas,
     recaudacion,
     costosFijos,
     totalFijosDiario,
@@ -779,24 +825,33 @@ export async function createGastoAction(data: {
       fecha: data.fecha || new Date().toISOString(),
     });
 
-    // Si es compra a crédito con tarjeta, crear deuda y pago automáticamente
-    if (data.es_compra_credito && data.medio_pago?.toLowerCase() === "tarjeta") {
-      const [insertedDeuda] = await db.insert(deudas).values({
+    // Si es tarjeta (Opción A) o si se marcó explícitamente como compra a crédito
+    if (data.medio_pago?.toLowerCase() === "tarjeta" || data.es_compra_credito) {
+      // Para tarjetas, estimamos un vencimiento al día 10 del próximo mes
+      const hoy = new Date();
+      let mesVencimiento = hoy.getMonth() + 1;
+      let anioVencimiento = hoy.getFullYear();
+      if (hoy.getDate() >= 10) {
+        mesVencimiento += 1;
+        if (mesVencimiento > 11) {
+          mesVencimiento = 0;
+          anioVencimiento += 1;
+        }
+      }
+      const fechaVencEstimada = new Date(anioVencimiento, mesVencimiento, 10).toISOString().split('T')[0];
+
+      await db.insert(deudas).values({
         nombre: data.descripcion,
-        descripcion: "Compra a crédito con tarjeta",
+        descripcion: `Compra a crédito (${data.medio_pago || 'Otro'}) - ${data.categoria === 2 ? 'Reinversión' : 'Operativo'}`,
         monto_total: data.monto,
         activa: 1,
-      }).returning({ id: deudas.id });
-
-      await db.insert(pagos_deuda).values({
-        deuda_id: insertedDeuda.id,
-        monto: data.monto,
-        nota: "Compra a crédito registrada",
+        fecha_vencimiento: fechaVencEstimada,
       });
     }
 
     return { success: true };
   } catch (error) {
+    console.error("Error en createGastoAction:", error);
     return { success: false, error: String(error) };
   }
 }
@@ -811,6 +866,7 @@ export type DeudaItem = {
   monto_pagado: number;
   saldo: number;
   activa: number | null;
+  fecha_vencimiento: string | null;
   fecha_creacion: string | null;
   pagos: { id: number; monto: number; fecha: string; nota: string | null }[];
 };
@@ -941,12 +997,14 @@ export async function createDeudaAction(data: {
   nombre: string;
   descripcion?: string;
   monto_total: number;
+  fecha_vencimiento?: string;
 }): Promise<{ success: boolean; id?: number; error?: string }> {
   try {
     const [inserted] = await db.insert(deudas).values({
       nombre: data.nombre,
       descripcion: data.descripcion || null,
       monto_total: data.monto_total,
+      fecha_vencimiento: data.fecha_vencimiento || null,
       activa: 1,
     }).returning({ id: deudas.id });
     return { success: true, id: inserted.id };

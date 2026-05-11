@@ -1,7 +1,7 @@
 import { db } from "@/db";
 import { ventas, clientes } from "@/db/schema";
 import { and, like, eq, sql, count, desc, type SQL } from "drizzle-orm";
-import { Search, TrendingUp, ShoppingCart, Banknote, CreditCard, ArrowUpRight } from "lucide-react";
+import { Search, TrendingUp, ShoppingCart, Banknote, CreditCard, ArrowUpRight, Receipt } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "@/lib/formatter";
 
@@ -253,13 +253,23 @@ export default async function VentasPage({ searchParams }: Props) {
                         )}
                       </td>
                       <td className="px-6 py-3 text-center">
-                        <Link
-                          href={`/ventas/${v.id}`}
-                          className="inline-flex items-center gap-1 p-1.5 rounded-lg text-zinc-500 hover:bg-orange-500/10 hover:text-orange-400 transition-all border border-transparent hover:border-orange-500/20"
-                          title="Ver detalle"
-                        >
-                          <ArrowUpRight className="w-4 h-4" />
-                        </Link>
+                        <div className="flex items-center justify-center gap-2">
+                          <Link
+                            href={`/ventas/${v.id}/ticket`}
+                            target="_blank"
+                            className="inline-flex items-center gap-1 p-1.5 rounded-lg text-zinc-500 hover:bg-emerald-500/10 hover:text-emerald-500 transition-all border border-transparent hover:border-emerald-500/20"
+                            title="Ver Ticket"
+                          >
+                            <Receipt className="w-4 h-4" />
+                          </Link>
+                          <Link
+                            href={`/ventas/${v.id}`}
+                            className="inline-flex items-center gap-1 p-1.5 rounded-lg text-zinc-500 hover:bg-orange-500/10 hover:text-orange-400 transition-all border border-transparent hover:border-orange-500/20"
+                            title="Ver detalle"
+                          >
+                            <ArrowUpRight className="w-4 h-4" />
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   );

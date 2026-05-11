@@ -91,7 +91,7 @@ df = df[df["codigo"] != ""]
 print(json.dumps(df.to_dict("records"), ensure_ascii=False))
 `;
 
-  const { stdout } = await execFileAsync("python", ["-c", script], {
+  const { stdout } = await execFileAsync("py", ["-c", script], {
     maxBuffer: 10 * 1024 * 1024,
     windowsHide: true,
   });

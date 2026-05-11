@@ -36,9 +36,7 @@ export async function updateProduct(id: number, formData: FormData): Promise<{ s
       return { success: false, error: "El precio de venta minorista debe ser mayor a 0" };
     }
 
-    if (data.stock < 0) {
-      return { success: false, error: "El stock no puede ser negativo" };
-    }
+    // Stock puede ser 0 o negativo para permitir ventas sin stock
 
     // Verificar que el producto existe
     const [existingProduct] = await db.select({ id: productos.id })
@@ -112,9 +110,7 @@ export async function createProduct(formData: FormData): Promise<{ success: bool
       return { success: false, error: "El precio de venta minorista debe ser mayor a 0" };
     }
 
-    if (data.stock < 0) {
-      return { success: false, error: "El stock no puede ser negativo" };
-    }
+    // Stock puede ser 0 o negativo para permitir ventas sin stock
 
     await db.insert(productos).values(data);
 
