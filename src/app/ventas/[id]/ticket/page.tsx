@@ -6,6 +6,7 @@ import { Printer, ArrowLeft, Download } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { notFound } from "next/navigation";
+import { PrintButton } from "@/components/PrintButton";
 
 export const dynamic = "force-dynamic";
 
@@ -50,13 +51,7 @@ export default async function TicketVentaPage({ params }: Props) {
           <ArrowLeft className="w-4 h-4" />
           Volver a Ventas
         </Link>
-        <button 
-          onClick={() => window.print()}
-          className="flex items-center gap-2 bg-zinc-900 text-white px-4 py-2 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg"
-        >
-          <Printer className="w-4 h-4" />
-          Imprimir / Guardar PDF
-        </button>
+        <PrintButton />
       </div>
 
       {/* Comprobante */}
