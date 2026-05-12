@@ -4,6 +4,7 @@ import { and, like, eq, sql, count, desc, type SQL } from "drizzle-orm";
 import { Search, TrendingUp, ShoppingCart, Banknote, CreditCard, ArrowUpRight, Receipt } from "lucide-react";
 import Link from "next/link";
 import { formatCurrency } from "@/lib/formatter";
+import { VentaActions } from "@/components/VentaActions";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,7 @@ export default async function VentasPage({ searchParams }: Props) {
       descuento: ventas.descuento,
       cliente_id: ventas.cliente_id,
       nombre: clientes.nombre,
+      estado: ventas.estado,
     })
     .from(ventas)
     .leftJoin(clientes, eq(ventas.cliente_id, clientes.id))
@@ -244,7 +246,7 @@ export default async function VentasPage({ searchParams }: Props) {
                           <span className="text-[11px] text-zinc-600">-</span>
                         )}
                       </td>
-                      <td className="px-6 py-3 text-right font-bold text-emerald-400">
+                      <td className={`px-6 py-3 text-right font-bold ${v.estado === 'anulado' ? 'text-zinc-500 line-through' : 'text-emerald-400'}`}>
                         {formatCurrency(v.total)}
                         {(v.descuento ?? 0) > 0 && (
                           <span className="ml-1 text-[10px] text-orange-400 font-normal">
@@ -254,6 +256,7 @@ export default async function VentasPage({ searchParams }: Props) {
                       </td>
                       <td className="px-6 py-3 text-center">
                         <div className="flex items-center justify-center gap-2">
+                          <VentaActions ventaId={v.id} estado={v.estado || 'completado'} />
                           <Link
                             href={`/ventas/${v.id}/ticket`}
                             target="_blank"

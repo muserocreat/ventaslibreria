@@ -1,9 +1,10 @@
 "use server";
 
 import { db } from "@/db";
-import { productos } from "@/db/schema";
+import { productos, variantes_producto } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { saveVariantesAction } from "./productActions";
 
 function parsePrice(value: FormDataEntryValue | null): number {
   if (typeof value !== "string") return 0;
@@ -27,16 +28,13 @@ export async function updateProduct(id: number, formData: FormData): Promise<{ s
       rubro: formData.get("rubro") as string,
     };
 
+    const variantesJson = formData.get("variantes") as string;
+    const variantes = variantesJson ? JSON.parse(variantesJson) : [];
+
     // Validaciones básicas
     if (!data.tipo || !data.marca) {
       return { success: false, error: "Tipo y marca son obligatorios" };
     }
-
-    if (data.precio_venta_minorista <= 0) {
-      return { success: false, error: "El precio de venta minorista debe ser mayor a 0" };
-    }
-
-    // Stock puede ser 0 o negativo para permitir ventas sin stock
 
     // Verificar que el producto existe
     const [existingProduct] = await db.select({ id: productos.id })
@@ -47,15 +45,20 @@ export async function updateProduct(id: number, formData: FormData): Promise<{ s
       return { success: false, error: "Producto no encontrado" };
     }
 
+    // Actualizar producto base
     await db.update(productos)
       .set(data)
       .where(eq(productos.id, id));
 
+    // Guardar variantes
+    const varResult = await saveVariantesAction(id, variantes);
+    if (!varResult.success) return varResult;
+
     revalidatePath("/productos");
     return { success: true, message: "Producto actualizado correctamente" };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error en updateProduct:", error);
-    return { success: false, error: "Error al actualizar el producto" };
+    return { success: false, error: "Error al actualizar el producto: " + error.message };
   }
 }
 
@@ -101,18 +104,20 @@ export async function createProduct(formData: FormData): Promise<{ success: bool
       rubro: formData.get("rubro") as string,
     };
 
+    const variantesJson = formData.get("variantes") as string;
+    const variantes = variantesJson ? JSON.parse(variantesJson) : [];
+
     // Validaciones básicas
     if (!data.tipo || !data.marca) {
       return { success: false, error: "Tipo y marca son obligatorios" };
     }
 
-    if (data.precio_venta_minorista <= 0) {
-      return { success: false, error: "El precio de venta minorista debe ser mayor a 0" };
+    const [newProduct] = await db.insert(productos).values(data).returning({ id: productos.id });
+
+    if (newProduct && variantes.length > 0) {
+      const varResult = await saveVariantesAction(newProduct.id, variantes);
+      if (!varResult.success) return varResult;
     }
-
-    // Stock puede ser 0 o negativo para permitir ventas sin stock
-
-    await db.insert(productos).values(data);
 
     revalidatePath("/productos");
     return { success: true, message: "Producto creado correctamente" };

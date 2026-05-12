@@ -40,7 +40,7 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <div className="w-64 bg-zinc-950 border-r border-zinc-800 flex flex-col h-screen sticky top-0">
+    <div className="w-64 bg-zinc-950 border-r border-zinc-800 flex flex-col h-screen sticky top-0 print:hidden">
       <div className="p-6 flex items-center gap-3">
         <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center">
           <Library className="text-zinc-950 w-5 h-5" />

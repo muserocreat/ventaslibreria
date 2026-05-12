@@ -33,7 +33,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
   
   // ── Product search ─────────────────────────────────────────────
   const [query, setQuery]           = useState("");
-  const [results, setResults]       = useState<ProductoResult[]>([]);
+  const [results, setResults]       = useState<any[]>([]);
   const [searching, setSearching]   = useState(false);
   const searchTimer                 = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,6 +51,8 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
 
   // ── Modal state ────────────────────────────────────────────────
   const [modalOpen, setModalOpen]   = useState(false);
+  const [variantModalOpen, setVariantModalOpen] = useState(false);
+  const [productForVariant, setProductForVariant] = useState<any | null>(null);
   const [clienteQuery, setClienteQuery]       = useState("");
   const [clienteResults, setClienteResults]   = useState<ClienteResult[]>([]);
   const [clienteSearching, setClienteSearching] = useState(false);
@@ -108,42 +110,91 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
   }, [clienteQuery]);
 
   // ── Cart helpers ───────────────────────────────────────────────
-  const addToCart = useCallback((p: ProductoResult, qty: number = 1, precio: number = p.precio_venta_minorista ?? 0) => {
+  const addToCart = useCallback((p: ProductoResult, qty: number = 1, precio: number = p.precio_venta_minorista ?? 0, variant?: any) => {
     const amount = Math.max(1, qty);
     setCart(prev => {
-      const existing = prev.find(i => i.producto_id === p.id);
+      // Identificar si el item ya existe (comparando producto_id y variante_id)
+      const existing = prev.find(i => (variant ? i.variante_id === variant.id : (i.producto_id === p.id && !i.variante_id)));
       if (existing) {
         return prev.map(i =>
-          i.producto_id === p.id
+          (variant ? i.variante_id === variant.id : (i.producto_id === p.id && !i.variante_id))
             ? { ...i, cantidad: i.cantidad + amount, subtotal: (i.cantidad + amount) * precio, precio, esPromocional: precio !== (p.precio_venta_minorista ?? 0), precio_venta_minorista: p.precio_venta_minorista ?? 0 }
             : i
         );
       }
       return [...prev, {
         producto_id: p.id,
-        nombre: [p.tipo, p.marca, p.descripcion].filter(Boolean).join(" "),
+        variante_id: variant?.id || null,
+        nombre: variant 
+          ? `${[p.tipo, p.marca, p.descripcion].filter(Boolean).join(" ")} (${variant.nombre})`
+          : [p.tipo, p.marca, p.descripcion].filter(Boolean).join(" "),
         precio,
         cantidad: amount,
         subtotal: precio * amount,
         esPromocional: precio !== (p.precio_venta_minorista ?? 0),
         precio_venta_minorista: p.precio_venta_minorista ?? 0,
+        precioBaseVariante: (variant?.precio_venta !== null && variant?.precio_venta !== undefined) ? variant.precio_venta : (p.precio_venta_minorista ?? 0)
       }];
     });
     setPendingQty(prev => ({ ...prev, [p.id]: 1 }));
   }, []);
 
   const handleAddToCart = useCallback(async (p: ProductoResult, qty: number = 1) => {
+    // Si el producto tiene variantes, verificamos si alguna coincide exactamente con el código buscado
+    if (p.variantes && p.variantes.length > 0) {
+      const exactMatch = p.variantes.find(v => v.codigo_barras === query.trim());
+      if (exactMatch) {
+        const clienteId = selectedCliente?.id || (clienteAnonimo ? null : null);
+        const result = await getPrecioPromocionalForClientAction(p.id, qty, clienteId || null);
+        
+        // El precio base es el de la variante si existe, sino el del producto
+        const vPrecio = exactMatch.precio_venta;
+        const precioBase = (vPrecio !== null && vPrecio !== undefined) ? vPrecio : (p.precio_venta_minorista || 0);
+        
+        // Si hay un precio promocional, solo lo usamos si es distinto al precio de venta minorista base 
+        // (porque getPrecioPromocionalForClientAction devuelve el minorista si no hay tramo real)
+        // O si queremos que la promo sea absoluta.
+        const precio = (result.precio && result.precio !== p.precio_venta_minorista) ? result.precio : precioBase;
+        
+        addToCart(p, qty, precio, exactMatch);
+        setQuery("");
+        return;
+      }
+
+      setProductForVariant(p);
+      setVariantModalOpen(true);
+      return;
+    }
+
     const clienteId = selectedCliente?.id || (clienteAnonimo ? null : null);
     const result = await getPrecioPromocionalForClientAction(p.id, qty, clienteId || null);
     const precio = result.precio || p.precio_venta_minorista || 0;
     addToCart(p, qty, precio);
-  }, [selectedCliente, clienteAnonimo, addToCart]);
+  }, [selectedCliente, clienteAnonimo, addToCart, query]);
 
-  const updateQty = useCallback((id: number, delta: number) => {
+  const selectVariant = useCallback(async (variant: any, producto: ProductoResult) => {
+    const qty = pendingQty[producto.id] || 1;
+    
+    // El precio base es el de la variante si existe, sino el del producto
+    const vPrecio = variant.precio_venta;
+    const precioBase = (vPrecio !== null && vPrecio !== undefined) ? vPrecio : (producto.precio_venta_minorista || 0);
+    
+    const clienteId = selectedCliente?.id || (clienteAnonimo ? null : null);
+    const result = await getPrecioPromocionalForClientAction(producto.id, qty, clienteId || null);
+    
+    // Solo usamos el precio promocional si es distinto al minorista base (promo real)
+    const precio = (result.precio && result.precio !== producto.precio_venta_minorista) ? result.precio : precioBase;
+    
+    addToCart(producto, qty, precio, variant);
+    setVariantModalOpen(false);
+    setProductForVariant(null);
+  }, [selectedCliente, clienteAnonimo, pendingQty, addToCart]);
+
+  const updateQty = useCallback((producto_id: number, delta: number, variante_id?: number | null) => {
     setCart(prev =>
       prev
         .map(i =>
-          i.producto_id === id
+          (variante_id ? i.variante_id === variante_id : (i.producto_id === producto_id && !i.variante_id))
             ? { ...i, cantidad: i.cantidad + delta, subtotal: (i.cantidad + delta) * i.precio }
             : i
         )
@@ -151,25 +202,27 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
     );
   }, []);
 
-  const setQty = useCallback((id: number, qty: number) => {
+  const setQty = useCallback((producto_id: number, qty: number, variante_id?: number | null) => {
     const val = Math.max(1, qty);
     setCart(prev =>
       prev.map(i =>
-        i.producto_id === id
+        (variante_id ? i.variante_id === variante_id : (i.producto_id === producto_id && !i.variante_id))
           ? { ...i, cantidad: val, subtotal: val * i.precio }
           : i
       )
     );
   }, []);
 
-  const removeFromCart = useCallback((id: number) => {
-    setCart(prev => prev.filter(i => i.producto_id !== id));
+  const removeFromCart = useCallback((producto_id: number, variante_id?: number | null) => {
+    setCart(prev => prev.filter(i => 
+      !(i.producto_id === producto_id && i.variante_id === (variante_id || null))
+    ));
   }, []);
 
-  const updatePrice = useCallback((id: number, newPrice: number) => {
+  const updatePrice = useCallback((producto_id: number, newPrice: number, variante_id?: number | null) => {
     setCart(prev =>
       prev.map(i =>
-        i.producto_id === id
+        (variante_id ? i.variante_id === variante_id : (i.producto_id === producto_id && !i.variante_id))
           ? { ...i, precio: newPrice, subtotal: i.cantidad * newPrice, precioManual: true }
           : i
       )
@@ -184,7 +237,13 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
         if (item.precioManual) return item;
 
         const result = await getPrecioPromocionalForClientAction(item.producto_id, item.cantidad, clienteId || null);
-        const precio = result.precio || item.precio_venta_minorista || item.precio;
+        
+        // El precio base para este item es el de su variante si existía, sino el minorista
+        const base = item.precioBaseVariante || item.precio_venta_minorista || item.precio;
+        
+        // Solo aplicar promo si es distinta al minorista base (promo real)
+        const precio = (result.precio && result.precio !== item.precio_venta_minorista) ? result.precio : base;
+        
         return {
           ...item,
           precio,
@@ -355,51 +414,95 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                 {results.map((p) => {
                   const inCart = cart.find(i => i.producto_id === p.id);
                   const qty = pendingQty[p.id] ?? 1;
+                  const hasVariants = p.variantes && p.variantes.length > 0;
+                  
                   return (
                     <div
                       key={p.id}
-                      className="flex items-center justify-between px-4 py-3 hover:bg-zinc-800/20 transition-colors"
+                      className="px-4 py-3 hover:bg-zinc-800/20 transition-colors"
                     >
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-zinc-100 truncate">
-                          {p.tipo} {p.marca}
-                        </p>
-                        {p.descripcion && (
-                          <p className="text-xs text-zinc-500 truncate">{p.descripcion}</p>
-                        )}
-                        {p.codigo_barras && (
-                          <p className="text-[10px] font-mono text-zinc-600 mt-0.5">{p.codigo_barras}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 ml-4 shrink-0">
-                        {p.stock != null && (
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            p.stock > 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"
-                          }`}>
-                            {p.stock > 0 ? `Stock: ${p.stock}` : `Stock: ${p.stock}`}
-                          </span>
-                        )}
-                        <div className="text-right">
-                          <p className="text-sm font-bold text-emerald-400">{formatARS(p.precio_venta_minorista ?? 0)}</p>
-                          {p.precio_venta_mayorista && p.precio_venta_mayorista !== p.precio_venta_minorista && (
-                            <p className="text-[10px] text-zinc-500">May: {formatARS(p.precio_venta_mayorista)}</p>
+                      {/* Main product info */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-zinc-100 truncate">
+                            {p.tipo} {p.marca}
+                          </p>
+                          {p.descripcion && (
+                            <p className="text-xs text-zinc-500 truncate">{p.descripcion}</p>
+                          )}
+                          {p.codigo_barras && (
+                            <p className="text-[10px] font-mono text-zinc-600 mt-0.5">{p.codigo_barras}</p>
                           )}
                         </div>
-                        {/* Qty + Add */}
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setPendingQty(prev => ({ ...prev, [p.id]: Math.max(1, (prev[p.id] ?? 1) - 1) })); }}
-                            className="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors"
-                          >
-                            <Minus className="w-3 h-3 text-zinc-300" />
-                          </button>
-                          <span className="w-8 text-center text-sm font-bold text-zinc-100">{qty}</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setPendingQty(prev => ({ ...prev, [p.id]: (prev[p.id] ?? 1) + 1 })); }}
-                            className="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors"
-                          >
-                            <Plus className="w-3 h-3 text-zinc-300" />
-                          </button>
+                        <div className="flex items-center gap-2 ml-4 shrink-0">
+                          {p.stock != null && (
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              p.stock > 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"
+                            }`}>
+                              {p.stock > 0 ? `Stock: ${p.stock}` : `Stock: ${p.stock}`}
+                            </span>
+                          )}
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-emerald-400">{formatARS(p.precio_venta_minorista ?? 0)}</p>
+                            {p.precio_venta_mayorista && p.precio_venta_mayorista !== p.precio_venta_minorista && (
+                              <p className="text-[10px] text-zinc-500">May: {formatARS(p.precio_venta_mayorista)}</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Variantes */}
+                      {hasVariants && (
+                        <div className="mb-2">
+                          <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">Variantes:</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {p.variantes.map((v: any) => {
+                              const inCartVariant = cart.find(i => i.producto_id === p.id && i.variante_id === v.id);
+                              return (
+                                <button
+                                  key={v.id}
+                                  onClick={() => selectVariant(v, p)}
+                                  className={`group flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium transition-all border ${
+                                    inCartVariant
+                                      ? "bg-orange-500/20 border-orange-500/40 text-orange-300"
+                                      : "bg-zinc-800/40 border-zinc-700 text-zinc-300 hover:border-amber-500/50 hover:bg-zinc-800"
+                                  }`}
+                                >
+                                  <span className="font-bold">{v.nombre}</span>
+                                  <span className="text-[10px] opacity-70">{v.stock > 0 ? `S:${v.stock}` : 'S:0'}</span>
+                                  <span className="text-emerald-400 font-mono text-[10px]">
+                                    {formatARS(v.precio_venta || p.precio_venta_minorista || 0)}
+                                  </span>
+                                  {inCartVariant && (
+                                    <span className="w-4 h-4 bg-orange-500 text-zinc-950 rounded-full text-[9px] font-black flex items-center justify-center">
+                                      {inCartVariant.cantidad}
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Qty + Add (solo para productos sin variantes) */}
+                      {!hasVariants && (
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setPendingQty(prev => ({ ...prev, [p.id]: Math.max(1, (prev[p.id] ?? 1) - 1) })); }}
+                              className="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors"
+                            >
+                              <Minus className="w-3 h-3 text-zinc-300" />
+                            </button>
+                            <span className="w-8 text-center text-sm font-bold text-zinc-100">{qty}</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setPendingQty(prev => ({ ...prev, [p.id]: (prev[p.id] ?? 1) + 1 })); }}
+                              className="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors"
+                            >
+                              <Plus className="w-3 h-3 text-zinc-300" />
+                            </button>
+                          </div>
                           <button
                             onClick={() => handleAddToCart(p, qty)}
                             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
@@ -415,7 +518,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                             }
                           </button>
                         </div>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
@@ -458,7 +561,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                 {/* Items */}
                 <div className="flex-1 overflow-y-auto max-h-[300px] divide-y divide-zinc-800/60">
                   {cart.map((item) => (
-                    <div key={item.producto_id} className="px-4 py-3">
+                    <div key={`${item.producto_id}-${item.variante_id || 'base'}`} className="px-4 py-3">
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-zinc-200 leading-tight">{item.nombre}</p>
@@ -469,7 +572,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                           )}
                         </div>
                         <button
-                          onClick={() => removeFromCart(item.producto_id)}
+                          onClick={() => removeFromCart(item.producto_id, item.variante_id)}
                           className="shrink-0 text-zinc-600 hover:text-red-400 transition-colors"
                         >
                           <X className="w-3.5 h-3.5" />
@@ -479,7 +582,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                         {/* Qty controls */}
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => updateQty(item.producto_id, -1)}
+                            onClick={() => updateQty(item.producto_id, -1, item.variante_id)}
                             className="w-6 h-6 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors"
                           >
                             <Minus className="w-3 h-3 text-zinc-300" />
@@ -488,11 +591,11 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                             type="number"
                             min="1"
                             value={item.cantidad}
-                            onChange={(e) => setQty(item.producto_id, parseInt(e.target.value) || 1)}
+                            onChange={(e) => setQty(item.producto_id, parseInt(e.target.value) || 1, item.variante_id)}
                             className="w-12 bg-zinc-800 border border-zinc-700 rounded-lg px-1 py-0.5 text-zinc-100 text-sm text-center focus:outline-none focus:border-orange-500/50 transition-colors"
                           />
                           <button
-                            onClick={() => updateQty(item.producto_id, 1)}
+                            onClick={() => updateQty(item.producto_id, 1, item.variante_id)}
                             className="w-6 h-6 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors"
                           >
                             <Plus className="w-3 h-3 text-zinc-300" />
@@ -505,7 +608,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                               {item.precioManual && (
                                 <button
                                   onClick={() => {
-                                    setCart(prev => prev.map(i => i.producto_id === item.producto_id ? { ...i, precioManual: false } : i));
+                                    setCart(prev => prev.map(i => (i.producto_id === item.producto_id && i.variante_id === item.variante_id) ? { ...i, precioManual: false } : i));
                                   }}
                                   className="text-[9px] bg-amber-500/20 text-amber-500 px-1 py-0.5 rounded font-bold hover:bg-amber-500/30 transition-colors"
                                   title="Precio manual - Click para resetear"
@@ -520,7 +623,7 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                                 step="0.01"
                                 value={item.precio || ""}
                                 onChange={(e) =>
-                                  updatePrice(item.producto_id, parseFloat(e.target.value) || 0)
+                                  updatePrice(item.producto_id, parseFloat(e.target.value) || 0, item.variante_id)
                                 }
                                 className={`w-24 bg-zinc-800 border rounded-lg px-2 py-0.5 text-xs text-right focus:outline-none transition-colors ${
                                   item.precioManual 
@@ -786,6 +889,67 @@ export function POS({ quickProducts = [] }: { quickProducts?: ProductoResult[] }
                 ) : (
                   <><CheckCircle className="w-5 h-5" /> Confirmar Venta · {formatARS(total)}</>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de Variantes ─────────────────────────────── */}
+      {variantModalOpen && productForVariant && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-950/90 backdrop-blur-md animate-in fade-in">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95">
+            <div className="px-6 py-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+              <div>
+                <h3 className="text-lg font-black text-zinc-100 uppercase tracking-tight">Seleccionar Variante</h3>
+                <p className="text-xs text-zinc-500 font-medium">
+                  {[productForVariant.tipo, productForVariant.marca, productForVariant.descripcion].filter(Boolean).join(" ")}
+                </p>
+              </div>
+              <button 
+                onClick={() => { setVariantModalOpen(false); setProductForVariant(null); }}
+                className="p-2 hover:bg-zinc-800 rounded-full text-zinc-500 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 max-h-[60vh] overflow-y-auto space-y-2">
+              {productForVariant.variantes.map((v: any) => (
+                <button
+                  key={v.id}
+                  onClick={() => selectVariant(v, productForVariant)}
+                  className="w-full flex items-center justify-between p-4 bg-zinc-800/40 hover:bg-zinc-800 border border-zinc-800 hover:border-orange-500/50 rounded-2xl transition-all group text-left"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center text-orange-500 font-bold border border-zinc-800 group-hover:bg-orange-500/10 transition-colors">
+                      {v.nombre.substring(0, 2).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="font-bold text-zinc-100 group-hover:text-white transition-colors">{v.nombre}</p>
+                      <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">
+                        Stock: <span className={v.stock > 0 ? "text-emerald-500" : "text-red-500"}>{v.stock}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-black text-emerald-400">
+                      {formatARS(v.precio_venta || productForVariant.precio_venta_minorista || 0)}
+                    </p>
+                    {v.precio_venta && (
+                      <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-tighter">Precio Especial</p>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="p-6 bg-zinc-900/50 border-t border-zinc-800">
+              <button 
+                onClick={() => { setVariantModalOpen(false); setProductForVariant(null); }}
+                className="w-full py-3 rounded-xl bg-zinc-800 text-zinc-400 font-bold hover:bg-zinc-700 transition-all text-sm uppercase tracking-widest"
+              >
+                Cancelar
               </button>
             </div>
           </div>

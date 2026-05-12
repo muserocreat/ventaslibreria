@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { updateProduct, createProduct } from "@/lib/actions";
+import { getVariantesByProductoAction } from "@/lib/productActions";
 import { 
   Save, 
   AlertTriangle,
-  CheckCircle
+  CheckCircle,
+  Plus,
+  Trash2,
+  Layers
 } from "lucide-react";
 
 interface ProductFormProps {
@@ -26,14 +30,46 @@ interface ProductFormProps {
   isEdit?: boolean;
 }
 
+type Variante = {
+  id?: number;
+  nombre: string;
+  precio_venta: number | null;
+  stock: number;
+  codigo_barras: string | null;
+};
+
 export function ProductForm({ product, isEdit = false }: ProductFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [variantes, setVariantes] = useState<Variante[]>([]);
+
+  useEffect(() => {
+    if (isEdit && product) {
+      getVariantesByProductoAction(product.id).then(setVariantes);
+    }
+  }, [isEdit, product]);
+
+  const addVariante = () => {
+    setVariantes([...variantes, { nombre: "", precio_venta: null, stock: 0, codigo_barras: "" }]);
+  };
+
+  const removeVariante = (index: number) => {
+    setVariantes(variantes.filter((_, i) => i !== index));
+  };
+
+  const updateVariante = (index: number, field: keyof Variante, value: any) => {
+    const newVariantes = [...variantes];
+    newVariantes[index] = { ...newVariantes[index], [field]: value };
+    setVariantes(newVariantes);
+  };
 
   const handleSubmit = async (formData: FormData) => {
     setLoading(true);
     setMessage(null);
+
+    // Añadir variantes como JSON
+    formData.append("variantes", JSON.stringify(variantes));
 
     try {
       let result;
@@ -157,11 +193,80 @@ export function ProductForm({ product, isEdit = false }: ProductFormProps) {
           </div>
         </section>
 
+        {/* Sección: Variantes */}
+        <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2">
+              <Layers className="w-5 h-5 text-amber-500" />
+              <h2 className="text-lg font-semibold text-zinc-100">Variantes</h2>
+            </div>
+            <button 
+              type="button" 
+              onClick={addVariante}
+              className="text-xs bg-amber-500/10 text-amber-500 border border-amber-500/20 px-3 py-1.5 rounded-lg hover:bg-amber-500/20 transition-all flex items-center gap-2 font-bold"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Agregar Variante
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {variantes.length === 0 ? (
+              <div className="text-center py-8 border border-dashed border-zinc-800 rounded-xl">
+                <p className="text-zinc-500 text-sm italic">No hay variantes definidas para este producto.</p>
+              </div>
+            ) : (
+              variantes.map((v, index) => (
+                <div key={index} className="grid grid-cols-1 md:grid-cols-5 gap-3 bg-zinc-950/50 p-4 rounded-xl border border-zinc-800 relative group animate-in fade-in slide-in-from-left-2">
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] uppercase font-bold text-zinc-500 mb-1">Nombre / Atributo</label>
+                    <input 
+                      type="text" 
+                      value={v.nombre}
+                      onChange={(e) => updateVariante(index, "nombre", e.target.value)}
+                      placeholder="Ej: Rojo, 100ml, XL..."
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-amber-500/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-zinc-500 mb-1">Precio (Opcional)</label>
+                    <input 
+                      type="number" 
+                      value={v.precio_venta ?? ''}
+                      onChange={(e) => updateVariante(index, "precio_venta", parseFloat(e.target.value) || null)}
+                      placeholder="Usa base"
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-amber-500/50 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-zinc-500 mb-1">Stock</label>
+                    <input 
+                      type="number" 
+                      value={v.stock}
+                      onChange={(e) => updateVariante(index, "stock", parseInt(e.target.value) || 0)}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-amber-500/50"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button 
+                      type="button" 
+                      onClick={() => removeVariante(index)}
+                      className="w-full bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg py-2 hover:bg-red-500/20 transition-all flex items-center justify-center"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
         {/* Sección: Precios */}
         <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-5 h-5 bg-blue-500 rounded" />
-            <h2 className="text-lg font-semibold text-zinc-100">Precios</h2>
+            <h2 className="text-lg font-semibold text-zinc-100">Precios Base</h2>
           </div>
           
           <div className="grid gap-6 md:grid-cols-3">
@@ -226,13 +331,13 @@ export function ProductForm({ product, isEdit = false }: ProductFormProps) {
         <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-5 h-5 bg-purple-500 rounded" />
-            <h2 className="text-lg font-semibold text-zinc-100">Inventario</h2>
+            <h2 className="text-lg font-semibold text-zinc-100">Inventario Base</h2>
           </div>
           
           <div className="grid gap-6 md:grid-cols-1">
             <div className="max-w-xs">
               <label className="block text-sm font-medium text-zinc-300 mb-2">
-                Stock
+                Stock Total
               </label>
               <input 
                 type="number" 
@@ -242,6 +347,7 @@ export function ProductForm({ product, isEdit = false }: ProductFormProps) {
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20 transition-all"
                 placeholder="0"
               />
+              <p className="text-[10px] text-zinc-500 mt-2 italic">Nota: Si usas variantes, el stock se puede manejar por separado.</p>
             </div>
           </div>
         </section>
@@ -299,3 +405,4 @@ export function ProductForm({ product, isEdit = false }: ProductFormProps) {
     </>
   );
 }
+

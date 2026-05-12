@@ -46,12 +46,23 @@ export const ventas = sqliteTable('ventas', {
   descuento: real('descuento').default(0),
   pedido_id: integer('pedido_id'),
   tipo: text('tipo'),
+  estado: text('estado').default('completado'), // completado, anulado
+});
+
+export const variantes_producto = sqliteTable('variantes_producto', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  producto_id: integer('producto_id').notNull(),
+  nombre: text('nombre').notNull(), // ej: Azul, XL, 500ml
+  precio_venta: real('precio_venta'), // Si es null, usa el del producto
+  stock: integer('stock').default(0),
+  codigo_barras: text('codigo_barras'),
 });
 
 export const detalle_venta = sqliteTable('detalle_venta', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   venta_id: integer('venta_id'),
   producto_id: integer('producto_id'),
+  variante_id: integer('variante_id'),
   cantidad: integer('cantidad'),
   subtotal: real('subtotal'),
   nombre_producto: text('nombre_producto'),

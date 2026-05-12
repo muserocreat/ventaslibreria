@@ -27,7 +27,7 @@ export default function RootLayout({
     <html lang="es" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full bg-zinc-950 flex overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-y-auto h-screen relative border-l border-zinc-900 shadow-2xl">
+        <main className="flex-1 overflow-y-auto h-screen relative border-l border-zinc-900 shadow-2xl print:border-none print:shadow-none">
           {children}
         </main>
       </body>

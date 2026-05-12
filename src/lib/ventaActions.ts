@@ -8,6 +8,7 @@ import {
   detalle_venta,
   cuentas_corrientes,
   movimientos_cuenta_corriente,
+  variantes_producto,
 } from "@/db/schema";
 import { like, or, eq, isNull, and, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -23,6 +24,13 @@ export type ProductoResult = {
   precio_venta_mayorista: number | null;
   codigo_barras: string | null;
   stock: number | null;
+  variantes?: Array<{
+    id: number;
+    nombre: string;
+    precio_venta: number | null;
+    stock: number;
+    codigo_barras: string | null;
+  }>;
 };
 
 export type ClienteResult = {
@@ -36,6 +44,7 @@ export type ClienteResult = {
 
 export type CartItem = {
   producto_id: number;
+  variante_id?: number | null;
   nombre: string;
   precio: number;
   cantidad: number;
@@ -43,6 +52,7 @@ export type CartItem = {
   esPromocional?: boolean;
   precio_venta_minorista?: number;
   precioManual?: boolean;
+  precioBaseVariante?: number;
 };
 
 export type CreateVentaData = {
@@ -96,11 +106,13 @@ export async function getProductosByIdsAction(ids: number[]): Promise<ProductoRe
   return results;
 }
 
-export async function searchProductosAction(query: string): Promise<ProductoResult[]> {
+export async function searchProductosAction(query: string): Promise<any[]> {
   if (!query || query.trim().length < 2) return [];
 
   const words = query.trim().split(/\s+/).filter(Boolean);
-  const conditions = words.map(word => 
+  
+  // 1. Buscar productos que coincidan
+  const productConditions = words.map(word => 
     or(
       like(productos.tipo, `%${word}%`),
       like(productos.marca, `%${word}%`),
@@ -111,26 +123,63 @@ export async function searchProductosAction(query: string): Promise<ProductoResu
     )
   );
 
-  return db
-    .select({
-      id: productos.id,
-      tipo: productos.tipo,
-      marca: productos.marca,
-      descripcion: productos.descripcion,
-      precio_venta_minorista: productos.precio_venta_minorista,
-      precio_venta_mayorista: productos.precio_venta_mayorista,
-      codigo_barras: productos.codigo_barras,
-      stock: productos.stock,
-    })
+  const prods = await db
+    .select()
     .from(productos)
     .where(
       and(
         or(isNull(productos.activo), eq(productos.activo, 1)),
-        ...conditions
+        ...productConditions
       )
     )
-    .limit(20) as Promise<ProductoResult[]>;
+    .limit(30);
+
+  // 2. Buscar variantes que coincidan por código de barras o nombre
+  const variantConditions = words.map(word => 
+    or(
+      like(variantes_producto.nombre, `%${word}%`),
+      like(variantes_producto.codigo_barras, `%${word}%`)
+    )
+  );
+
+  const variantsMatched = await db
+    .select({
+      producto_id: variantes_producto.producto_id
+    })
+    .from(variantes_producto)
+    .where(and(...variantConditions))
+    .limit(30);
+
+  const extraProductIds = [...new Set(variantsMatched.map(v => v.producto_id))];
+  
+  // Si encontramos variantes pero sus productos no están en la lista original, los traemos
+  const currentProdIds = prods.map(p => p.id);
+  const missingProdIds = extraProductIds.filter(id => !currentProdIds.includes(id));
+  
+  if (missingProdIds.length > 0) {
+    const extraProds = await db
+      .select()
+      .from(productos)
+      .where(inArray(productos.id, missingProdIds));
+    prods.push(...extraProds);
+  }
+
+  if (prods.length === 0) return [];
+
+  // 3. Obtener todas las variantes de los productos encontrados (Optimizado: 1 sola query)
+  const allVariants = await db
+    .select()
+    .from(variantes_producto)
+    .where(inArray(variantes_producto.producto_id, prods.map(p => p.id)));
+
+  // 4. Mapear
+  return prods.map(p => ({
+    ...p,
+    variantes: allVariants.filter(v => v.producto_id === p.id)
+  }));
 }
+
+import { inArray } from "drizzle-orm";
 
 export async function ensureClienteAnonimoAction(): Promise<number> {
   const [existing] = await db
@@ -314,6 +363,7 @@ export async function createVentaAction(data: CreateVentaData): Promise<CreateVe
         productosVenta.map((item) => ({
           venta_id: newVenta.id,
           producto_id: item.producto_id,
+          variante_id: item.variante_id, // Nuevo campo
           cantidad: item.cantidad,
           subtotal: item.cantidad * item.precio,
           nombre_producto: item.nombre,
@@ -324,11 +374,17 @@ export async function createVentaAction(data: CreateVentaData): Promise<CreateVe
       ).run();
 
       for (const item of productosVenta) {
-        tx
-          .update(productos)
-          .set({ stock: sql`${productos.stock} - ${item.cantidad}` })
-          .where(and(eq(productos.id, item.producto_id), sql`${productos.stock} IS NOT NULL`))
-          .run();
+        if (item.variante_id) {
+          tx.update(variantes_producto)
+            .set({ stock: sql`${variantes_producto.stock} - ${item.cantidad}` })
+            .where(eq(variantes_producto.id, item.variante_id))
+            .run();
+        } else {
+          tx.update(productos)
+            .set({ stock: sql`${productos.stock} - ${item.cantidad}` })
+            .where(and(eq(productos.id, item.producto_id), sql`${productos.stock} IS NOT NULL`))
+            .run();
+        }
       }
 
       if (data.metodo_pago === "Cuenta Corriente") {
@@ -439,5 +495,71 @@ export async function createVentaAction(data: CreateVentaData): Promise<CreateVe
       success: false,
       error: error instanceof Error ? error.message : "Error al registrar la venta",
     };
+  }
+}
+
+export async function anularVentaAction(ventaId: number) {
+  try {
+    const venta = db.select().from(ventas).where(eq(ventas.id, ventaId)).get();
+    if (!venta) throw new Error("Venta no encontrada");
+    if (venta.estado === 'anulado') throw new Error("La venta ya está anulada");
+
+    const detalles = db.select().from(detalle_venta).where(eq(detalle_venta.venta_id, ventaId)).all();
+
+    db.transaction((tx) => {
+      // 1. Marcar venta como anulada
+      tx.update(ventas).set({ estado: 'anulado' }).where(eq(ventas.id, ventaId)).run();
+
+      // 2. Restaurar stock de productos y variantes
+      for (const item of detalles) {
+        if (item.producto_id) {
+          tx.update(productos)
+            .set({ stock: sql`${productos.stock} + ${item.cantidad}` })
+            .where(eq(productos.id, item.producto_id))
+            .run();
+        }
+        if (item.variante_id) {
+          tx.update(variantes_producto)
+            .set({ stock: sql`${variantes_producto.stock} + ${item.cantidad}` })
+            .where(eq(variantes_producto.id, item.variante_id))
+            .run();
+        }
+      }
+
+      // 3. Si fue Cuenta Corriente, revertir deuda
+      if (venta.metodo_pago === 'Cuenta Corriente' && venta.cliente_id) {
+        tx.update(cuentas_corrientes)
+          .set({ saldo_actual: sql`${cuentas_corrientes.saldo_actual} - ${venta.total}` })
+          .where(eq(cuentas_corrientes.cliente_id, venta.cliente_id))
+          .run();
+
+        tx.insert(movimientos_cuenta_corriente).values({
+          cliente_id: venta.cliente_id,
+          tipo_movimiento: 'ajuste',
+          monto: venta.total,
+          descripcion: `ANULACIÓN Venta #${venta.id}`,
+          fecha: nowSqliteLocal(),
+        }).run();
+      }
+
+      // 4. Revertir puntos de fidelidad (si no es anónimo)
+      const puntosRestar = Math.floor((venta.total || 0) / 100);
+      if (puntosRestar > 0 && venta.cliente_id) {
+        tx.update(clientes)
+          .set({ puntos: sql`MAX(0, COALESCE(${clientes.puntos}, 0) - ${puntosRestar})` })
+          .where(eq(clientes.id, venta.cliente_id))
+          .run();
+      }
+    });
+
+    revalidatePath("/ventas");
+    revalidatePath("/productos");
+    revalidatePath("/clientes");
+    revalidatePath("/cuentas-corrientes");
+    
+    return { success: true, mensaje: "Venta anulada correctamente" };
+  } catch (error: any) {
+    console.error("Error al anular venta:", error);
+    return { success: false, error: error.message };
   }
 }

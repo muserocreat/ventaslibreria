@@ -27,6 +27,7 @@ export default async function TicketVentaPage({ params }: Props) {
       descuento: ventas.descuento,
       cliente_nombre: clientes.nombre,
       cliente_dni: clientes.dni,
+      estado: ventas.estado,
     })
     .from(ventas)
     .leftJoin(clientes, eq(ventas.cliente_id, clientes.id))
@@ -40,8 +41,10 @@ export default async function TicketVentaPage({ params }: Props) {
     .from(detalle_venta)
     .where(eq(detalle_venta.venta_id, ventaId));
 
+  const esAnulada = venta.estado === "anulado";
+
   return (
-    <div className="min-h-screen bg-zinc-100 p-4 md:p-8 print:p-0 print:bg-white">
+    <div className={`min-h-screen bg-zinc-100 p-4 md:p-8 print:p-0 print:bg-white ${esAnulada ? 'grayscale opacity-80' : ''}`}>
       {/* Botones de control (ocultos al imprimir) */}
       <div className="max-w-2xl mx-auto mb-6 flex justify-between items-center print:hidden">
         <Link 
@@ -55,7 +58,14 @@ export default async function TicketVentaPage({ params }: Props) {
       </div>
 
       {/* Comprobante */}
-      <div className="max-w-[800px] mx-auto bg-white shadow-2xl rounded-3xl overflow-hidden print:shadow-none print:rounded-none border border-zinc-200 print:border-none">
+      <div className="max-w-[800px] mx-auto bg-white shadow-2xl rounded-3xl overflow-hidden print:shadow-none print:rounded-none border border-zinc-200 print:border-none relative">
+        {esAnulada && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rotate-12">
+            <div className="border-8 border-red-500/30 text-red-500/30 text-8xl font-black px-8 py-4 uppercase tracking-[0.2em]">
+              ANULADO
+            </div>
+          </div>
+        )}
         <div className="p-8 md:p-12">
           {/* Header */}
           <div className="flex flex-col md:flex-row justify-between gap-8 mb-12 border-b border-zinc-100 pb-12">
@@ -94,7 +104,9 @@ export default async function TicketVentaPage({ params }: Props) {
             <div className="bg-zinc-50 rounded-2xl p-6">
               <p className="text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Información de Pago</p>
               <p className="text-lg font-bold text-zinc-900">{venta.metodo_pago}</p>
-              <p className="text-sm text-zinc-500">Estado: Completado</p>
+              <p className={`text-sm font-bold ${esAnulada ? 'text-red-500' : 'text-emerald-500'}`}>
+                Estado: {esAnulada ? 'ANULADO' : 'Completado'}
+              </p>
             </div>
           </div>
 
